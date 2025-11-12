@@ -4,16 +4,6 @@ import json
 import sys
 import urllib.request
 
-# Get schema URL from argument or default
-schema_url = sys.argv[1] if len(sys.argv) > 1 else "https://charm.land/crush.json"
-
-try:
-    with urllib.request.urlopen(schema_url, timeout=10) as response:
-        schema = json.loads(response.read().decode())
-except Exception as e:
-    print(f"Error fetching schema: {e}", file=sys.stderr)
-    sys.exit(1)
-
 
 def nix_type(json_type):
     """Convert JSON schema type to Nix type."""
@@ -59,7 +49,7 @@ def escape_description(desc):
     return desc.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
 
 
-def resolve_ref(ref):
+def resolve_ref(ref, schema):
     """Resolve $ref to actual schema."""
     if not ref.startswith("#/$defs/"):
         return {}
@@ -76,7 +66,7 @@ def is_valid_nix_identifier(name):
     return all(c.isalnum() or c in ("_", "-") for c in name)
 
 
-def generate_options(properties, indent="      "):
+def generate_options(properties, schema, indent="      "):
     """Generate Nix option declarations from schema properties."""
     if not properties:
         return ""
@@ -89,7 +79,7 @@ def generate_options(properties, indent="      "):
 
         # Resolve $ref if present
         if "$ref" in schema_prop:
-            schema_prop = resolve_ref(schema_prop["$ref"])
+            schema_prop = resolve_ref(schema_prop["$ref"], schema)
 
         desc = schema_prop.get("description", "")
         default = schema_prop.get("default")
@@ -113,7 +103,9 @@ def generate_options(properties, indent="      "):
             lines.append(f"{indent}{name} = lib.mkOption {{")
             lines.append(f"{indent}  type = lib.types.submodule {{")
             lines.append(f"{indent}    options = {{")
-            lines.append(generate_options(schema_prop["properties"], indent + "      "))
+            lines.append(
+                generate_options(schema_prop["properties"], schema, indent + "      ")
+            )
             lines.append(f"{indent}    }};")
             lines.append(f"{indent}  }};")
             if default is not None:
@@ -126,7 +118,7 @@ def generate_options(properties, indent="      "):
         elif json_type == "array" and "items" in schema_prop:
             items = schema_prop["items"]
             if "$ref" in items:
-                items = resolve_ref(items["$ref"])
+                items = resolve_ref(items["$ref"], schema)
 
             if (
                 isinstance(items, dict)
@@ -138,7 +130,9 @@ def generate_options(properties, indent="      "):
                     f"{indent}  type = lib.types.listOf (lib.types.submodule {{"
                 )
                 lines.append(f"{indent}    options = {{")
-                lines.append(generate_options(items["properties"], indent + "      "))
+                lines.append(
+                    generate_options(items["properties"], schema, indent + "      ")
+                )
                 lines.append(f"{indent}    }};")
                 lines.append(f"{indent}  }});")
                 if default is not None:
@@ -164,7 +158,7 @@ def generate_options(properties, indent="      "):
         elif json_type == "object" and "additionalProperties" in schema_prop:
             additional_props = schema_prop["additionalProperties"]
             if "$ref" in additional_props:
-                additional_props = resolve_ref(additional_props["$ref"])
+                additional_props = resolve_ref(additional_props["$ref"], schema)
 
             if (
                 isinstance(additional_props, dict)
@@ -178,7 +172,7 @@ def generate_options(properties, indent="      "):
                     lines.append(f"{indent}    options = {{")
                     lines.append(
                         generate_options(
-                            additional_props["properties"], indent + "      "
+                            additional_props["properties"], schema, indent + "      "
                         )
                     )
                     lines.append(f"{indent}    }};")
@@ -228,25 +222,41 @@ def generate_options(properties, indent="      "):
     return "\n".join(lines)
 
 
-# Generate the Nix module
-output = []
-output.append("{lib}:")
-output.append("lib.mkOption {")
-output.append("  type = lib.types.submodule {")
-output.append("    options = {")
+def main():
+    """Main function to generate Nix options from JSON schema."""
+    # Get schema URL from argument or default
+    schema_url = sys.argv[1] if len(sys.argv) > 1 else "https://charm.land/crush.json"
 
-# Get the root Config definition
-if "$ref" in schema:
-    root_def = resolve_ref(schema["$ref"])
-else:
-    root_def = schema
+    try:
+        with urllib.request.urlopen(schema_url, timeout=10) as response:
+            schema = json.loads(response.read().decode())
+    except Exception as e:
+        print(f"Error fetching schema: {e}", file=sys.stderr)
+        sys.exit(1)
 
-if "properties" in root_def:
-    output.append(generate_options(root_def["properties"], "      "))
+    # Generate the Nix module
+    output = []
+    output.append("{lib}:")
+    output.append("lib.mkOption {")
+    output.append("  type = lib.types.submodule {")
+    output.append("    options = {")
 
-output.append("    };")
-output.append("  };")
-output.append("  default = {};")
-output.append("}")
+    # Get the root Config definition
+    if "$ref" in schema:
+        root_def = resolve_ref(schema["$ref"], schema)
+    else:
+        root_def = schema
 
-print("\n".join(output))
+    if "properties" in root_def:
+        output.append(generate_options(root_def["properties"], schema, "      "))
+
+    output.append("    };")
+    output.append("  };")
+    output.append("  default = {};")
+    output.append("}")
+
+    print("\n".join(output))
+
+
+if __name__ == "__main__":
+    main()
