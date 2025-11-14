@@ -3,11 +3,14 @@
 
 set -euo pipefail
 
-# Get schema URL from argument or default
-SCHEMA_URL="${1:-https://charm.land/crush.json}"
+# Get the version from the crush package
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+VERSION=$(grep -oP 'version = "\K[^"]+' "$SCRIPT_DIR/../pkgs/crush/default.nix" | head -1)
+
+# Build schema URL from version
+SCHEMA_URL="${1:-https://raw.githubusercontent.com/charmbracelet/crush/refs/tags/v${VERSION}/schema.json}"
 
 # Call the Python script
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEMP_FILE=$(mktemp --suffix=.nix)
 trap 'rm -f "$TEMP_FILE"' EXIT
 
